@@ -70,7 +70,7 @@ To set up and run all services using Docker Compose, follow these steps:
 4.  **Access the services:**
 
       * **`product-service`**: `http://localhost:3000`
-      * **`order-service`**: `http://localhost:4000`
+      * **`order-service`**: `http://localhost:8080`
 
 5.  **Stop the services:**
 
