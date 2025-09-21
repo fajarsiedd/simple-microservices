@@ -1,0 +1,99 @@
+services:
+  # Service for Database MySQL
+  db:
+    image: mysql:8.0
+    container_name: mysql-db
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_DB_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DB_NAME}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  # Service untuk Database PostgreSQL
+  order-db:
+    image: postgres:15-alpine
+    container_name: postgres-db
+    restart: always
+    environment:
+      TZ: "Asia/Jakarta"
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - order-db-data:/var/lib/postgresql/data
+
+  # Service for Redis Cache
+  redis:
+    image: redis:6.2-alpine
+    container_name: redis-cache
+    restart: always
+    environment:
+      TZ: "Asia/Jakarta"
+    ports:
+      - "6379:6379"
+    command: redis-server /usr/local/etc/redis/redis.conf
+    volumes:
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+  
+  # Service for RabbitMQ
+  rabbitmq:
+    image: rabbitmq:3.11-management-alpine
+    container_name: rabbitmq-broker
+    restart: always
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
+    ports:
+      - "5672:5672" # Port for communication
+      - "15672:15672" # Port for RabbitMQ Management UI
+
+  # Service for Product
+  product-service:
+    build:
+      context: ./product-service
+      dockerfile: Dockerfile
+    container_name: product-service
+    restart: always
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./product-service/.env
+    depends_on:
+      - rabbitmq        
+      - redis
+      - db
+
+  # Service for Order
+  order-service:
+    build:
+      context: ./order-service
+      dockerfile: Dockerfile
+    container_name: order-service
+    restart: always
+    ports:
+      - "8080:8080"
+    env_file:
+      - ./order-service/.env
+    depends_on:
+      - rabbitmq        
+      - redis        
+      - order-db
+      - product-service
+
+  # K6 Load Tester
+  k6:
+    image: grafana/k6
+    container_name: k6
+    volumes:
+      - ./order-service/load_test.js:/home/k6/load_test.js
+    depends_on:
+      - order-service
+
+volumes:
+  mysql-data:
+  order-db-data:
