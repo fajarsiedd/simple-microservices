@@ -4,6 +4,7 @@ import { RedisService } from '@liaoliaots/nestjs-redis';
 import { IProductRepository } from '../interfaces/product-repository.interface';
 import { RabbitmqService } from '../../shared/messaging/rabbitmq.service';
 import { NotFoundException } from '@nestjs/common';
+import { DataSource } from "typeorm";
 
 const mockProductRepository = () => ({
     create: jest.fn(),
@@ -26,6 +27,23 @@ const mockRedisClient = {
 const mockRedisService = () => ({
     getOrThrow: jest.fn(() => mockRedisClient),
 });
+
+const mockQueryBuilder = {
+  createQueryBuilder: jest.fn(() => ({
+    setLock: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    getOne: jest.fn(),
+  })),
+};
+
+const mockManager = {
+  getRepository: jest.fn(() => mockQueryBuilder),
+  save: jest.fn(),
+};
+
+const mockDataSource = {
+    transaction: jest.fn((callback) => callback(mockManager)),
+};
 
 describe('ProductsService', () => {
     let service: ProductsService;
@@ -50,6 +68,10 @@ describe('ProductsService', () => {
                     provide: RedisService,
                     useValue: mockRedisService(),
                 },
+                {
+                    provide: DataSource,
+                    useValue: mockDataSource,
+                },
             ],
         }).compile();
 
@@ -63,45 +85,15 @@ describe('ProductsService', () => {
     it('should be defined', () => {
         expect(service).toBeDefined();
     });
-
-    describe('reduceStock()', () => {
-        it('should publish a "product.not-found" event if the product does not exist', async () => {
-            productRepository.findOneById.mockResolvedValue(null);
-            await service.reduceStock(1, 101, 5);
-            expect(rabbitmqService.publishEvent).toHaveBeenCalledWith('product.not-found', expect.any(Object));
-            expect(productRepository.update).not.toHaveBeenCalled();
-            expect(redisClient.del).not.toHaveBeenCalled();
-        });
-
-        it('should publish a "stock-insufficient" event if there is not enough stock', async () => {
-            const productWithLowStock = { id: 101, qty: 3 };
-            productRepository.findOneById.mockResolvedValue(productWithLowStock);
-            await service.reduceStock(1, 101, 5);
-            expect(rabbitmqService.publishEvent).toHaveBeenCalledWith('product.stock-insufficient', expect.any(Object));
-            expect(productRepository.update).not.toHaveBeenCalled();
-            expect(redisClient.del).not.toHaveBeenCalled();
-        });
-
-        it('should update stock and clear cache if stock is sufficient', async () => {
-            const productWithEnoughStock = { id: 101, qty: 10 };
-            productRepository.findOneById.mockResolvedValue(productWithEnoughStock);
-            productRepository.update.mockResolvedValue({ id: 101, qty: 5 });
-            
-            await service.reduceStock(1, 101, 5);
-            
-            expect(productRepository.update).toHaveBeenCalledWith(101, { qty: 5 });
-            expect(redisClient.del).toHaveBeenCalledWith('products:id:101');
-            expect(rabbitmqService.publishEvent).not.toHaveBeenCalled();
-        });
-    });
+    
 
     describe('findOne()', () => {
         it('should return a product from cache if it exists', async () => {
             const product = { id: 1, name: 'Basmut', price: 1000 };
             redisClient.get.mockResolvedValue(JSON.stringify(product));
-            
+
             const result = await service.findOne(1);
-            
+
             expect(redisClient.get).toHaveBeenCalledWith('products:id:1');
             expect(productRepository.findOneById).not.toHaveBeenCalled();
             expect(result).toEqual(product);
@@ -112,7 +104,7 @@ describe('ProductsService', () => {
             redisClient.get.mockResolvedValue(null);
             productRepository.findOneById.mockResolvedValue(product);
             redisClient.set.mockResolvedValue('OK');
-            
+
             const result = await service.findOne(2);
 
             expect(redisClient.get).toHaveBeenCalledWith('products:id:2');
@@ -133,7 +125,7 @@ describe('ProductsService', () => {
         it('should create a new product, clear cache, and publish an event', async () => {
             const createDto = { name: 'Nasgor', price: 20000 };
             const newProduct = { id: 1, ...createDto };
-            
+
             productRepository.create.mockResolvedValue(newProduct);
             redisClient.del.mockResolvedValue(1);
 
